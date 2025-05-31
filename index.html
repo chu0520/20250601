@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>手勢答題遊戲</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/addons/p5.dom.min.js"></script>
+  <script src="https://unpkg.com/ml5@0.6.0/dist/ml5.min.js"></script>
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; }
+    body { overflow: hidden; }
+    canvas { display: block; }
+    #startBtn, #growBtn {
+      position: absolute;
+      left: 50%;
+      transform: translate(-50%, 0);
+      font-size: 2rem;
+      padding: 20px 60px;
+      border-radius: 16px;
+      border: none;
+      background: #4caf50;
+      color: #fff;
+      cursor: pointer;
+      z-index: 10;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+      display: none;
+    }
+    #growBtn {
+      background: #ffb347;
+      top: 70%;
+    }
+    #startBtn {
+      background: #4caf50;
+    }
+  </style>
+</head>
+<body>
+<button id="growBtn">開始養花花</button>
+<button id="startBtn">開始遊戲</button>
+<script>
+let video, handpose, predictions = [];
+let questions = [
+  { q: "請問教育科技學系屬於哪個學院?", a: "文學院", b: "商學院", c: "教育學院", answer: "C" },
+  { q: "教育科技學系的系主任是誰?", a: "陳慶帆", b: "陳韋君", c: "陳喬恩", answer: "A" },
+  { q: "哪一所學校擁有第一個教育科技系?", a: "文化", b: "淡江", c: "輔仁", answer: "B" }
+];
+let current = 0;
+let flowerStage = 0; // 0: nothing, 1:根, 2:根+葉, 3:完整小花
+let waiting = false;
+let showRule = false;
+let showWelcome = true;
+let gameStarted = false;
+let showAnswer = false;
+let answerText = "";
+let userAns = "";
+let userGesture = "";
+let answerChecked = false;
+let canAnswer = true; // 防止連續答題
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  video = createCapture(VIDEO);
+  video.size(width, height);
+  video.hide();
+  handpose = ml5.handpose(video, modelReady);
+  handpose.on("predict", results => { predictions = results; });
+  textAlign(CENTER, CENTER);
+
+  // 先顯示歡迎頁
+  document.getElementById('growBtn').style.display = 'block';
+  document.getElementById('growBtn').onclick = () => {
+    showWelcome = false;
+    showRule = true;
+    document.getElementById('growBtn').style.display = 'none';
+    document.getElementById('startBtn').style.display = 'block';
+    // 預設 startBtn 位置
+    document.getElementById('startBtn').style.top = '60%';
+  };
+  document.getElementById('startBtn').onclick = () => {
+    showRule = false;
+    gameStarted = true;
+    document.getElementById('startBtn').style.display = 'none';
+  };
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  if (video) video.size(windowWidth, windowHeight);
+}
+
+function modelReady() {
+  console.log("Handpose model loaded!");
+}
+
+function draw() {
+  image(video, 0, 0, width, height);
+
+  // 歡迎頁
+  if (showWelcome) {
+    fill(255, 240, 250, 230);
+    rect(0, 0, width, height);
+    textSize(60);
+    fill(255, 105, 180);
+    text("教科小花花", width/2, height/2 - 120);
+
+    // 畫主角小花花
+    drawFlower(3, width/2, height/2 + 40);
+
+    // 畫可愛圖騰小花
+    for(let i=0;i<6;i++){
+      let angle = i * Math.PI / 3;
+      let fx = width/2 + Math.cos(angle) * 250;
+      let fy = height/2 + Math.sin(angle) * 120;
+      drawCuteFlower(fx, fy, 0.6 + 0.2*Math.sin(i));
+    }
+    textSize(28);
+    fill(80, 80, 80);
+    text("答對所有題目讓教科小花花長大！", width/2, height/2 + 170);
+
+    // 顯示「答對所有題目讓教科小花花長大！」在按鈕上方
+    let btn = document.getElementById('growBtn');
+    btn.style.display = 'block';
+    btn.style.left = '50%';
+    btn.style.transform = 'translate(-50%, 0)';
+    btn.style.top = (height/2 + 220) + 'px';
+    document.getElementById('startBtn').style.display = 'none';
+    text("", width/2, height/2 + 210);
+    return;
+  }
+
+  // 規則頁
+  if (showRule) {
+    fill(0, 180);
+    rect(0, 0, width, height);
+    fill(255);
+    textSize(40);
+    text("遊戲規則", width/2, height/2 - 120);
+    textSize(28);
+    // 增加行距
+    let ruleLines = [
+      "請用手勢作答：",
+      "",
+      "當答案是A時請出剪刀",
+      "當答案是B時請出石頭",
+      "當答案是C時請出布",
+      "",
+      "請點擊下方「開始遊戲」按鈕"
+    ];
+    let baseY = height/2 - 60;
+    let lineHeight = 44; // 行距加大
+    for(let i=0; i<ruleLines.length; i++) {
+      text(ruleLines[i], width/2, baseY + i*lineHeight);
+    }
+    // 讓開始遊戲按鈕顯示在規則文字下方
+    let btn = document.getElementById('startBtn');
+    btn.style.display = 'block';
+    btn.style.top = (baseY + ruleLines.length * lineHeight + 40) + 'px';
+    btn.style.left = '50%';
+    btn.style.transform = 'translate(-50%, 0)';
+    document.getElementById('growBtn').style.display = 'none';
+    return;
+  } else {
+    // 不是規則頁就隱藏按鈕
+    document.getElementById('startBtn').style.display = 'none';
+  }
+
+  if (!gameStarted) return;
+
+  // 顯示題目區塊
+  let qBoxW = width * 0.6;
+  let qBoxH = 180;
+  let qBoxX = width * 0.2;
+  let qBoxY = height - qBoxH - 40;
+  fill(255, 200);
+  rect(qBoxX, qBoxY, qBoxW, qBoxH, 24);
+  fill(0);
+  textSize(32);
+  if (current < questions.length) {
+    text(questions[current].q, qBoxX + qBoxW/2, qBoxY + 40);
+    textSize(24);
+    text(
+      "A(剪刀): " + questions[current].a +
+      "   B(石頭): " + questions[current].b +
+      "   C(布): " + questions[current].c,
+      qBoxX + qBoxW/2, qBoxY + 100
+    );
+  }
+
+  // 顯示小花在題目區塊左側
+  let flowerX = qBoxX - 120;
+  let flowerY = qBoxY + qBoxH/2 + 10;
+  drawFlower(flowerStage, flowerX, flowerY);
+
+  // 顯示答錯或答對時的訊息
+  if (showAnswer && current > 0 && current <= questions.length) {
+    fill('rgba(255,0,0,0.85)');
+    rect(qBoxX, qBoxY - 60, qBoxW, 50, 16);
+    fill(255);
+    textSize(28);
+    text(answerText, qBoxX + qBoxW/2, qBoxY - 35);
+  }
+
+  // 顯示目前偵測到的手勢（方便 debug）
+  if (predictions.length > 0) {
+    let gesture = getGesture(predictions[0]);
+    fill(0, 180);
+    rect(10, 10, 220, 60, 10);
+    fill(255);
+    textSize(16);
+    text("偵測手勢: " + gesture, 120, 30);
+    text("你選擇: " + userAns, 120, 50);
+    if (current < questions.length) {
+      text("正確答案: " + questions[current].answer, 120, 70);
+    }
+  }
+
+  if (current < questions.length) {
+    if (!waiting && !showAnswer) {
+      if (predictions.length > 0 && canAnswer) {
+        let gesture = getGesture(predictions[0]);
+        let tempAns = "";
+        if (gesture === "scissors") tempAns = "A";
+        if (gesture === "rock") tempAns = "B";
+        if (gesture === "paper") tempAns = "C";
+        if (tempAns && !answerChecked) {
+          userAns = tempAns;
+          userGesture = gesture;
+          answerChecked = true;
+          waiting = true;
+          canAnswer = false; // 鎖定，直到手收回
+
+          // 答對就讓花成長，答錯才顯示正確答案
+          if (userAns === questions[current].answer) {
+            if (current === 0) flowerStage = 1; // 第一題對，長根
+            if (current === 1) flowerStage = 2; // 第二題對，長葉
+            if (current === 2) flowerStage = 3; // 第三題對，開花
+            answerText = ""; // 答對不顯示答案
+            showAnswer = false;
+            setTimeout(() => {
+              answerChecked = false;
+              current++;
+              waiting = false;
+              if (current >= questions.length) {
+                // 遊戲結束，花已經在上面設定
+              }
+              canAnswer = true;
+            }, 800);
+          } else {
+            // 答錯才顯示正確答案
+            let ansKey = questions[current].answer;
+            let ansText = questions[current][ansKey.toLowerCase()];
+            answerText = `答錯囉！正確答案是 ${ansKey}: ${ansText}`;
+            showAnswer = true;
+            setTimeout(() => {
+              showAnswer = false;
+              answerChecked = false;
+              current++;
+              waiting = false;
+              canAnswer = true;
+            }, 1500);
+          }
+        }
+      }
+      // 如果沒有偵測到手，解除鎖定
+      if (predictions.length === 0) {
+        canAnswer = true;
+      }
+    }
+  } else {
+    fill(0, 200);
+    rect(0, 0, width, height);
+    fill(255);
+    textSize(40);
+    if (flowerStage === 3) {
+      text("恭喜！你的小花盛開了！", width/2, height/2-60);
+    } else if (flowerStage === 2) {
+      text("不錯！你的小花長出了葉子和根！", width/2, height/2-60);
+    } else if (flowerStage === 1) {
+      text("加油！你的小花只有根！", width/2, height/2-60);
+    } else {
+      text("可惜，什麼都沒有長出來！", width/2, height/2-60);
+    }
+    // 結果畫面小花放中間
+    drawFlower(flowerStage, width/2, height/2+80);
+  }
+}
+
+// 主角小花
+function drawFlower(stage, x, y) {
+  push();
+  translate(x, y);
+  let s = min(width, height) / 10;
+  // 根
+  if(stage > 0){
+    stroke(139,69,19);
+    strokeWeight(s*0.08);
+    noFill();
+    beginShape();
+    curveVertex(0, 0);
+    curveVertex(0, 0);
+    curveVertex(-s*0.1, s*0.6);
+    curveVertex(0, s*0.9);
+    curveVertex(s*0.1, s*0.6);
+    curveVertex(0, 0);
+    endShape();
+  }
+  // 葉子
+  if(stage > 1){
+    noStroke();
+    fill(60,180,75);
+    ellipse(-s*0.18, s*0.3, s*0.22, s*0.12);
+    ellipse(s*0.18, s*0.3, s*0.22, s*0.12);
+    ellipse(-s*0.13, s*0.5, s*0.18, s*0.09);
+    ellipse(s*0.13, s*0.5, s*0.18, s*0.09);
+  }
+  // 花
+  if(stage > 2){
+    // 花莖
+    stroke(60,180,75);
+    strokeWeight(s*0.08);
+    line(0,0,0,-s*0.7);
+    // 花瓣
+    noStroke();
+    fill(255,182,193);
+    for(let i=0;i<6;i++){
+      let angle = i*PI/3;
+      ellipse(Math.sin(angle)*s*0.32, -s*0.7+Math.cos(angle)*s*0.32, s*0.28, s*0.28);
+    }
+    // 花心
+    fill(255,220,120);
+    ellipse(0, -s*0.7, s*0.18, s*0.18);
+  }
+  pop();
+}
+
+// 可愛圖騰小花
+function drawCuteFlower(x, y, scale=1) {
+  push();
+  translate(x, y);
+  let s = min(width, height) / 18 * scale;
+  // 莖
+  stroke(60,180,75, 180);
+  strokeWeight(s*0.08);
+  line(0,0,0,-s*0.7);
+  // 花瓣
+  noStroke();
+  fill(255,182,193, 200);
+  for(let i=0;i<6;i++){
+    let angle = i*Math.PI/3;
+    ellipse(Math.sin(angle)*s*0.32, -s*0.7+Math.cos(angle)*s*0.32, s*0.28, s*0.28);
+  }
+  // 花心
+  fill(255,220,120, 220);
+  ellipse(0, -s*0.7, s*0.18, s*0.18);
+  pop();
+}
+
+// 更精確的手勢判斷（石頭放寬：最多1根手指伸直）
+function getGesture(prediction) {
+  if (prediction.handInViewConfidence !== undefined && prediction.handInViewConfidence < 0.8) return "";
+
+  const annotations = prediction.annotations;
+  let fingers = [
+    isFingerExtended(annotations.thumb),
+    isFingerExtended(annotations.indexFinger),
+    isFingerExtended(annotations.middleFinger),
+    isFingerExtended(annotations.ringFinger),
+    isFingerExtended(annotations.pinky)
+  ];
+
+  let extendedCount = fingers.filter(f => f).length;
+
+  // 剪刀：食指和中指伸直，無名指和小指彎曲（拇指不限）
+  if (fingers[1] && fingers[2] && !fingers[3] && !fingers[4]) return "scissors";
+  // 石頭：最多只有1根手指伸直
+  if (extendedCount <= 1) return "rock";
+  // 布：全部伸直
+  if (fingers.every(f => f)) return "paper";
+  return "";
+}
+
+// 更嚴格判斷單根手指是否伸直（放寬條件）
+function isFingerExtended(finger) {
+  let tip = finger[3];
+  let base = finger[0];
+  let d = dist(tip[0], tip[1], base[0], base[1]);
+  let mid1 = finger[1];
+  let mid2 = finger[2];
+  let d1 = dist(mid1[0], mid1[1], base[0], base[1]);
+  let d2 = dist(mid2[0], mid2[1], base[0], base[1]);
+  let avg = (d1 + d2) / 2;
+  // 放寬判斷，讓手指微彎也能判斷為伸直
+  return d > avg + 10;
+}
+</script>
+</body>
+</html>
